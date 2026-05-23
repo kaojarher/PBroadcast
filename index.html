@@ -3,372 +3,891 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>雲端網路廣播工作台</title>
-    <!-- 引入外部 QR Code 產生庫 -->
+    <title>WebRTC 廣播工作台</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap');
+
         :root {
-            --bg-color: #121212;
-            --card-bg: #1e1e1e;
-            --accent-color: #1db954;
-            --text-color: #ffffff;
-            --text-muted: #b3b3b3;
+            --bg: #080810;
+            --panel: #0e0e1c;
+            --border: #1c1c35;
+            --accent: #00f0ff;
+            --red: #ff2d55;
+            --green: #00ff9d;
+            --yellow: #ffe500;
+            --text: #d0d0f0;
+            --muted: #505080;
         }
 
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            margin: 0;
-            padding: 20px;
+            font-family: 'Barlow Condensed', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px 16px;
             display: flex;
             flex-direction: column;
             align-items: center;
+            background-image:
+                repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(255,255,255,0.015) 40px),
+                repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(255,255,255,0.015) 40px);
         }
 
-        .container {
+        /* ── HEADER ── */
+        .header {
             width: 100%;
-            max-width: 1000px;
+            max-width: 960px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 28px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .logo {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 1.1rem;
+            letter-spacing: 4px;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-bracket { color: var(--muted); }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.75rem;
+            letter-spacing: 2px;
+        }
+
+        .badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--muted);
+        }
+
+        .badge.live { color: var(--red); }
+        .badge.connected { color: var(--green); }
+
+        .dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .badge.live .dot { animation: blink 0.8s infinite; }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.2; }
+        }
+
+        /* ── LAYOUT ── */
+        .layout {
+            width: 100%;
+            max-width: 960px;
             display: grid;
             grid-template-columns: 1fr;
-            gap: 20px;
+            gap: 16px;
         }
 
-        @media (min-width: 768px) {
-            .container {
-                grid-template-columns: 2fr 1fr;
-            }
+        @media (min-width: 720px) {
+            .layout { grid-template-columns: 3fr 2fr; }
         }
 
-        .card {
-            background-color: var(--card-bg);
-            border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        /* ── PANELS ── */
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
         }
 
-        h2 {
-            margin-top: 0;
-            border-bottom: 1px solid #333;
-            padding-bottom: 10px;
-            font-size: 1.2rem;
+        .panel-title {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.65rem;
+            letter-spacing: 3px;
+            color: var(--muted);
+            text-transform: uppercase;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .panel-title::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        /* ── MODE TABS ── */
+        .mode-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .tab-btn {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: 2px;
+            padding: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+
+        .tab-btn.active {
+            background: var(--accent);
+            color: #000;
+        }
+
+        /* ── BROADCASTER PANEL ── */
+        #broadcaster-view, #listener-view { display: none; }
+        #broadcaster-view.active, #listener-view.active { display: block; }
+
+        /* Drop zone */
+        .drop-zone {
+            border: 1px dashed #252545;
+            border-radius: 8px;
+            padding: 28px 16px;
+            text-align: center;
+            color: var(--muted);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.95rem;
+            margin-bottom: 16px;
+        }
+
+        .drop-zone:hover, .drop-zone.hover {
+            border-color: var(--accent);
+            background: rgba(0,240,255,0.04);
+            color: var(--accent);
+        }
+
+        /* Now playing */
+        .now-playing {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.85rem;
+            color: var(--accent);
+            background: rgba(0,240,255,0.05);
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin-bottom: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-height: 38px;
+            display: flex;
+            align-items: center;
             letter-spacing: 1px;
         }
 
-        /* 拖曳區域 */
-        #drop-zone {
-            border: 2px dashed #444;
-            border-radius: 8px;
-            padding: 40px 20px;
-            text-align: center;
-            color: var(--text-muted);
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin-bottom: 20px;
-        }
+        audio { width: 100%; margin-bottom: 16px; }
 
-        #drop-zone.hover {
-            border-color: var(--accent-color);
-            background-color: rgba(29, 185, 84, 0.1);
-            color: #fff;
-        }
-
-        /* 播放器樣式 */
-        .player-controls {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 15px;
-        }
-
-        #now-playing {
-            font-weight: bold;
-            font-size: 1.1rem;
-            text-align: center;
-            color: var(--accent-color);
-            min-height: 27px;
-        }
-
-        audio {
-            width: 100%;
-            margin-top: 10px;
-        }
-
-        /* 播放清單 */
+        /* Playlist */
         .playlist {
             list-style: none;
-            padding: 0;
-            margin: 0;
-            max-height: 300px;
+            max-height: 220px;
             overflow-y: auto;
         }
 
-        .playlist-item {
+        .playlist::-webkit-scrollbar { width: 3px; }
+        .playlist::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .pl-item {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            padding: 12px;
-            border-bottom: 1px solid #282828;
-            cursor: move;
-            transition: background 0.2s;
-        }
-
-        .playlist-item:hover {
-            background-color: #282828;
-        }
-
-        .playlist-item.playing {
-            color: var(--accent-color);
-            background-color: rgba(29, 185, 84, 0.05);
-        }
-
-        .item-title {
-            flex-grow: 1;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            margin-right: 10px;
-        }
-
-        .btn-del {
-            background: none;
-            border: none;
-            color: #ff5555;
+            gap: 10px;
+            padding: 9px 10px;
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 0.9rem;
+            transition: background 0.15s;
+            font-size: 0.95rem;
         }
 
-        /* QR Code 區塊 */
-        .qr-section {
+        .pl-item:hover { background: rgba(255,255,255,0.03); }
+        .pl-item.playing { color: var(--accent); background: rgba(0,240,255,0.06); }
+
+        .pl-num {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--muted);
+            width: 20px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .pl-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        .pl-del {
+            background: none;
+            border: 1px solid transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 0.8rem;
+            padding: 2px 7px;
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+
+        .pl-del:hover { color: var(--red); border-color: var(--red); }
+
+        /* ── BROADCAST CONTROL ── */
+        .broadcast-control {
+            margin-top: 16px;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: center;
+            gap: 10px;
+        }
+
+        .peers-count {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--muted);
             text-align: center;
         }
 
-        #qrcode {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            margin-top: 15px;
-            display: inline-block;
+        .peers-count span { color: var(--green); font-size: 1.1rem; }
+
+        /* ── BUTTONS ── */
+        .btn {
+            border: none;
+            border-radius: 6px;
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            padding: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            width: 100%;
         }
 
-        .share-hint {
-            color: var(--text-muted);
-            font-size: 0.85rem;
-            margin-top: 15px;
-            line-height: 1.4;
+        .btn-primary { background: var(--accent); color: #000; }
+        .btn-primary:hover { opacity: 0.85; }
+        .btn-primary:disabled { background: #1a2a2a; color: var(--muted); cursor: not-allowed; }
+
+        .btn-danger { background: var(--red); color: #fff; }
+        .btn-danger:hover { opacity: 0.85; }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
         }
+
+        .btn-outline:hover { background: rgba(0,240,255,0.08); }
+
+        /* ── LISTENER PANEL ── */
+        .listener-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .listener-input-group label {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.7rem;
+            letter-spacing: 2px;
+            color: var(--muted);
+        }
+
+        .listener-input-group input {
+            background: #080814;
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.9rem;
+            width: 100%;
+            transition: border-color 0.2s;
+        }
+
+        .listener-input-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        #listener-audio { width: 100%; margin-top: 12px; }
+
+        .listener-status {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.8rem;
+            padding: 10px 14px;
+            border-radius: 6px;
+            text-align: center;
+            background: rgba(255,255,255,0.03);
+            color: var(--muted);
+            letter-spacing: 1px;
+        }
+
+        .listener-status.ok { color: var(--green); background: rgba(0,255,157,0.06); }
+        .listener-status.err { color: var(--red); background: rgba(255,45,85,0.06); }
+        .listener-status.connecting { color: var(--yellow); background: rgba(255,229,0,0.06); }
+
+        /* ── QR 側欄 ── */
+        .qr-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .qr-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+        }
+
+        #qrcode-display {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            display: inline-block;
+            opacity: 0.3;
+            transition: opacity 0.4s;
+        }
+
+        #qrcode-display.ready { opacity: 1; }
+
+        .qr-hint {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.72rem;
+            color: var(--muted);
+            text-align: center;
+            letter-spacing: 1px;
+            line-height: 1.7;
+        }
+
+        .qr-hint.live { color: var(--green); }
+
+        /* Room ID display */
+        .room-id-display {
+            background: #080814;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            text-align: center;
+        }
+
+        .room-id-label {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.65rem;
+            letter-spacing: 3px;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+
+        .room-id-value {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 1.1rem;
+            color: var(--accent);
+            letter-spacing: 4px;
+            word-break: break-all;
+        }
+
+        /* How-it-works */
+        .how-it-works {
+            background: rgba(0,240,255,0.03);
+            border: 1px solid rgba(0,240,255,0.1);
+            border-radius: 8px;
+            padding: 14px;
+            font-size: 0.88rem;
+            line-height: 1.8;
+            color: #8090b0;
+        }
+
+        .how-it-works strong { color: var(--accent); display: block; margin-bottom: 6px; font-size: 0.75rem; letter-spacing: 2px; }
+
+        .step {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+
+        .step-num {
+            font-family: 'Share Tech Mono', monospace;
+            color: var(--accent);
+            flex-shrink: 0;
+            font-size: 0.8rem;
+        }
+
+        /* Log */
+        .log-area {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.72rem;
+            color: var(--muted);
+            background: #05050f;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            max-height: 100px;
+            overflow-y: auto;
+            line-height: 1.8;
+        }
+
+        .log-area::-webkit-scrollbar { width: 3px; }
+        .log-area::-webkit-scrollbar-thumb { background: var(--border); }
+
+        .log-entry { display: block; }
+        .log-entry.ok { color: var(--green); }
+        .log-entry.err { color: var(--red); }
+        .log-entry.info { color: var(--accent); }
     </style>
 </head>
 <body>
 
-    <h1 style="margin-bottom: 30px; font-weight: 300;">📡 BROADCAST STATION</h1>
+<div class="header">
+    <div class="logo">
+        <span class="logo-bracket">[</span>
+        📡 WEBRTC BROADCAST
+        <span class="logo-bracket">]</span>
+    </div>
+    <div class="status-bar">
+        <div class="badge" id="badge-live">
+            <div class="dot"></div>
+            <span>OFFLINE</span>
+        </div>
+        <div class="badge" id="badge-peers">
+            <div class="dot"></div>
+            <span id="peer-count-label">0 LISTENERS</span>
+        </div>
+    </div>
+</div>
 
-    <div class="container">
-        <!-- 左側：主控制台與排程區 -->
-        <div class="main-panel">
-            <!-- 播放器核心 -->
-            <div class="card" style="margin-bottom: 20px;">
-                <h2>正在播音</h2>
-                <div class="player-controls">
-                    <div id="now-playing">尚未裝載節目音檔</div>
-                    <audio id="audio-player" controls></audio>
+<div class="layout">
+
+    <!-- 左側主控台 -->
+    <div>
+        <div class="panel" style="margin-bottom:16px;">
+            <div class="panel-title">模式選擇</div>
+            <div class="mode-tabs">
+                <button class="tab-btn active" id="tab-broadcaster" onclick="switchMode('broadcaster')">📡 主播端</button>
+                <button class="tab-btn" id="tab-listener" onclick="switchMode('listener')">🎧 聽眾端</button>
+            </div>
+
+            <!-- 主播端 -->
+            <div id="broadcaster-view" class="active">
+                <div class="panel-title">音源管理</div>
+                <div class="drop-zone" id="drop-zone">
+                    🎵 拖曳音訊檔案（MP3 / WAV）至此，或點擊選擇
+                    <input type="file" id="file-input" multiple accept="audio/*" style="display:none">
+                </div>
+                <div class="now-playing" id="now-playing">尚未裝載音檔</div>
+                <audio id="audio-player" controls></audio>
+                <ul class="playlist" id="playlist-container"></ul>
+
+                <div class="broadcast-control">
+                    <div class="peers-count">目前連線聽眾：<span id="peer-count">0</span> 人</div>
+                    <button class="btn btn-primary" id="btn-start-broadcast" onclick="startBroadcast()">
+                        開始廣播
+                    </button>
+                    <button class="btn btn-danger" id="btn-stop-broadcast" onclick="stopBroadcast()" style="display:none">
+                        停止廣播
+                    </button>
                 </div>
             </div>
 
-            <!-- 拖曳與節目編排 -->
-            <div class="card">
-                <h2>節目排程管理</h2>
-                <div id="drop-zone">
-                    🎵 拖曳音樂檔案 (MP3/WAV) 至此處，或點擊選擇檔案
-                    <input type="file" id="file-input" multiple accept="audio/*" style="display: none;">
+            <!-- 聽眾端 -->
+            <div id="listener-view">
+                <div class="panel-title">加入廣播</div>
+                <div class="listener-input-group">
+                    <label>輸入主播房間 ID（或掃描 QR Code 自動填入）</label>
+                    <input type="text" id="room-id-input" placeholder="例：broadcast-abc123" />
                 </div>
-                <ul class="playlist" id="playlist-container">
-                    <!-- 動態插入曲目 -->
-                </ul>
+                <button class="btn btn-primary" id="btn-join" onclick="joinBroadcast()">連線收聽</button>
+                <div class="listener-status" id="listener-status" style="margin-top:12px;">
+                    等待輸入房間 ID…
+                </div>
+                <audio id="listener-audio" controls style="display:none"></audio>
             </div>
         </div>
 
-        <!-- 右側：收聽與分享（QR Code） -->
-        <div class="sidebar">
-            <div class="card qr-section">
-                <h2>掃碼收聽廣播</h2>
-                <div id="qrcode"></div>
-                <div class="share-hint">
-                    <strong>觀眾收聽指南：</strong><br>
-                    此 QR Code 內含當前播放節目的線上收聽資訊。在中大型播音環境中，可將此網頁部署至伺服器（如 GitHub Pages），聽眾掃碼即可即時同步收聽您的音訊串流。
-                </div>
+        <!-- 日誌 -->
+        <div class="panel">
+            <div class="panel-title">系統日誌</div>
+            <div class="log-area" id="log-area">
+                <span class="log-entry">系統初始化完成，等待操作…</span>
             </div>
         </div>
     </div>
 
-    <script>
-        const dropZone = document.getElementById('drop-zone');
-        const fileInput = document.getElementById('file-input');
-        const playlistContainer = document.getElementById('playlist-container');
-        const audioPlayer = document.getElementById('audio-player');
-        const nowPlayingDiv = document.getElementById('now-playing');
-        const qrContainer = document.getElementById('qrcode');
+    <!-- 右側 QR 與說明 -->
+    <div class="qr-panel">
+        <div class="panel">
+            <div class="panel-title">掃碼收聽</div>
+            <div class="qr-box">
+                <div id="qrcode-display">
+                    <div id="qrcode-inner"></div>
+                </div>
+                <div class="qr-hint" id="qr-hint">請先開始廣播<br>QR Code 將自動生成</div>
+            </div>
+        </div>
 
-        let playlist = [];
-        let currentTrackIndex = -1;
-        let qrcode = new QRCode(qrContainer, { width: 180, height: 180 });
+        <div class="panel">
+            <div class="panel-title">房間 ID</div>
+            <div class="room-id-display">
+                <div class="room-id-label">BROADCAST ROOM ID</div>
+                <div class="room-id-value" id="room-id-display">— 尚未建立 —</div>
+            </div>
+        </div>
 
-        // 初始化 QR Code (預設指向當前網址)
-        updateQRCode(window.location.href);
+        <div class="panel">
+            <div class="panel-title">運作原理</div>
+            <div class="how-it-works">
+                <strong>WEBRTC P2P 架構</strong>
+                <div class="step"><span class="step-num">01</span><span>主播端開始廣播，取得唯一房間 ID</span></div>
+                <div class="step"><span class="step-num">02</span><span>聽眾掃描 QR Code 或輸入 ID 加入</span></div>
+                <div class="step"><span class="step-num">03</span><span>瀏覽器之間建立 P2P 音訊通道</span></div>
+                <div class="step"><span class="step-num">04</span><span>音訊直接從主播傳輸至聽眾，無需伺服器</span></div>
+                <br>
+                <span style="color:var(--muted);font-size:0.8rem;">⚠ 使用 PeerJS 公開信令伺服器（僅交換連線資訊，不傳輸音訊）。NAT 環境下可能需要 TURN 伺服器才能穿透。</span>
+            </div>
+        </div>
+    </div>
 
-        // --- 事件監聽：點擊與拖曳上傳 ---
-        dropZone.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+</div>
 
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.classList.add('hover');
+<script>
+// ── 全域狀態 ──
+let peer = null;
+let broadcastConn = {};      // 主播端：儲存所有連線的 MediaConnection
+let listenerConn = null;     // 聽眾端：與主播的連線
+let localStream = null;      // 從 audio element 抓出的 MediaStream
+let audioContext = null;
+let sourceNode = null;
+let destNode = null;
+let playlist = [];
+let currentTrackIndex = -1;
+let isBroadcasting = false;
+let qrcodeObj = null;
+
+// ── DOM refs ──
+const audioPlayer = document.getElementById('audio-player');
+const nowPlayingDiv = document.getElementById('now-playing');
+const playlistContainer = document.getElementById('playlist-container');
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const peerCountEl = document.getElementById('peer-count');
+const roomIdDisplay = document.getElementById('room-id-display');
+const qrDisplay = document.getElementById('qrcode-display');
+const qrHint = document.getElementById('qr-hint');
+const badgeLive = document.getElementById('badge-live');
+const badgePeers = document.getElementById('badge-peers');
+const logArea = document.getElementById('log-area');
+
+// ── 初始化 QR Code ──
+qrcodeObj = new QRCode(document.getElementById('qrcode-inner'), {
+    width: 160, height: 160,
+    correctLevel: QRCode.CorrectLevel.M
+});
+
+// ── 日誌 ──
+function log(msg, type = '') {
+    const span = document.createElement('span');
+    span.className = `log-entry ${type}`;
+    const time = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+    span.textContent = `[${time}] ${msg}`;
+    logArea.appendChild(span);
+    logArea.scrollTop = logArea.scrollHeight;
+}
+
+// ── 模式切換 ──
+function switchMode(mode) {
+    document.getElementById('broadcaster-view').classList.toggle('active', mode === 'broadcaster');
+    document.getElementById('listener-view').classList.toggle('active', mode === 'listener');
+    document.getElementById('tab-broadcaster').classList.toggle('active', mode === 'broadcaster');
+    document.getElementById('tab-listener').classList.toggle('active', mode === 'listener');
+
+    // 若 URL 有 roomId 參數，自動填入
+    const params = new URLSearchParams(window.location.search);
+    const roomId = params.get('room');
+    if (mode === 'listener' && roomId) {
+        document.getElementById('room-id-input').value = roomId;
+        log(`偵測到房間 ID：${roomId}，請點擊「連線收聽」`, 'info');
+    }
+}
+
+// ── 音檔上傳 ──
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('hover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('hover');
+    handleFiles(e.dataTransfer.files);
+});
+
+function handleFiles(files) {
+    for (let file of files) {
+        if (file.type.startsWith('audio/')) {
+            playlist.push({ name: file.name, url: URL.createObjectURL(file) });
+            log(`已加入：${file.name}`);
+        }
+    }
+    renderPlaylist();
+    if (currentTrackIndex === -1 && playlist.length > 0) playTrack(0);
+}
+
+function renderPlaylist() {
+    playlistContainer.innerHTML = '';
+    playlist.forEach((track, i) => {
+        const li = document.createElement('li');
+        li.className = `pl-item ${i === currentTrackIndex ? 'playing' : ''}`;
+        li.innerHTML = `
+            <span class="pl-num">${i + 1}</span>
+            <span class="pl-name">${track.name}</span>
+            <button class="pl-del" onclick="deleteTrack(${i}, event)">✕</button>
+        `;
+        li.addEventListener('click', () => playTrack(i));
+        playlistContainer.appendChild(li);
+    });
+}
+
+function playTrack(index) {
+    if (index < 0 || index >= playlist.length) return;
+    currentTrackIndex = index;
+    audioPlayer.src = playlist[index].url;
+    nowPlayingDiv.textContent = `▶  ${playlist[index].name}`;
+    renderPlaylist();
+    audioPlayer.play().catch(() => {});
+}
+
+audioPlayer.addEventListener('ended', () => {
+    if (currentTrackIndex + 1 < playlist.length) playTrack(currentTrackIndex + 1);
+    else { nowPlayingDiv.textContent = '■  播放完畢'; currentTrackIndex = -1; renderPlaylist(); }
+});
+
+window.deleteTrack = function(i, e) {
+    e.stopPropagation();
+    URL.revokeObjectURL(playlist[i].url);
+    playlist.splice(i, 1);
+    if (i === currentTrackIndex) { audioPlayer.src = ''; nowPlayingDiv.textContent = '尚未裝載音檔'; currentTrackIndex = -1; }
+    else if (i < currentTrackIndex) currentTrackIndex--;
+    renderPlaylist();
+};
+
+// ────────────────────────────────────────────
+//  主播端：開始廣播
+// ────────────────────────────────────────────
+async function startBroadcast() {
+    if (!playlist.length) {
+        alert('請先載入至少一個音訊檔案！');
+        return;
+    }
+
+    log('正在建立音訊串流…', 'info');
+
+    // 1. 用 AudioContext 捕捉 audio element 的輸出
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        sourceNode = audioContext.createMediaElementSource(audioPlayer);
+        destNode = audioContext.createMediaStreamDestination();
+        sourceNode.connect(destNode);
+        sourceNode.connect(audioContext.destination); // 讓主播本地也能聽到
+        localStream = destNode.stream;
+        log('音訊串流建立成功', 'ok');
+    } catch (err) {
+        log(`音訊串流建立失敗：${err.message}`, 'err');
+        alert(`音訊捕捉失敗：${err.message}\n\n請確保已點擊播放過至少一次（瀏覽器安全限制）。`);
+        return;
+    }
+
+    // 2. 建立 PeerJS 連線
+    const roomId = 'broadcast-' + Math.random().toString(36).substr(2, 6);
+    log(`建立 PeerJS 節點，ID：${roomId}`, 'info');
+
+    peer = new Peer(roomId, {
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        }
+    });
+
+    peer.on('open', (id) => {
+        log(`PeerJS 連線成功，房間 ID：${id}`, 'ok');
+        isBroadcasting = true;
+
+        // 更新 UI
+        document.getElementById('btn-start-broadcast').style.display = 'none';
+        document.getElementById('btn-stop-broadcast').style.display = 'block';
+        badgeLive.className = 'badge live';
+        badgeLive.querySelector('span').textContent = 'LIVE';
+        roomIdDisplay.textContent = id;
+
+        // 產生 QR Code（指向聽眾收聽頁面，帶 room 參數）
+        const listenUrl = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(id)}`;
+        qrcodeObj.clear();
+        qrcodeObj.makeCode(listenUrl);
+        qrDisplay.classList.add('ready');
+        qrHint.textContent = '掃碼後選「聽眾端」即可收聽';
+        qrHint.className = 'qr-hint live';
+
+        // 若有音檔，確保播放中
+        if (currentTrackIndex >= 0) audioPlayer.play().catch(() => {});
+    });
+
+    // 3. 監聽聽眾連入
+    peer.on('call', (call) => {
+        log(`聽眾連入：${call.peer}`, 'ok');
+        call.answer(localStream);   // 把本地音訊串流回應給聽眾
+        broadcastConn[call.peer] = call;
+        updatePeerCount();
+
+        call.on('close', () => {
+            log(`聽眾離線：${call.peer}`);
+            delete broadcastConn[call.peer];
+            updatePeerCount();
         });
 
-        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'));
+        call.on('error', (err) => {
+            log(`連線錯誤 (${call.peer})：${err}`, 'err');
+            delete broadcastConn[call.peer];
+            updatePeerCount();
+        });
+    });
 
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('hover');
-            handleFiles(e.dataTransfer.files);
+    peer.on('error', (err) => {
+        log(`PeerJS 錯誤：${err.type} - ${err.message}`, 'err');
+    });
+}
+
+function updatePeerCount() {
+    const count = Object.keys(broadcastConn).length;
+    peerCountEl.textContent = count;
+    document.getElementById('peer-count-label').textContent = `${count} LISTENER${count !== 1 ? 'S' : ''}`;
+    badgePeers.className = count > 0 ? 'badge connected' : 'badge';
+}
+
+function stopBroadcast() {
+    if (peer) { peer.destroy(); peer = null; }
+    if (audioContext) { audioContext.close(); audioContext = null; }
+    broadcastConn = {};
+    isBroadcasting = false;
+    document.getElementById('btn-start-broadcast').style.display = 'block';
+    document.getElementById('btn-stop-broadcast').style.display = 'none';
+    badgeLive.className = 'badge';
+    badgeLive.querySelector('span').textContent = 'OFFLINE';
+    badgePeers.className = 'badge';
+    document.getElementById('peer-count-label').textContent = '0 LISTENERS';
+    peerCountEl.textContent = '0';
+    roomIdDisplay.textContent = '— 已停止 —';
+    qrDisplay.classList.remove('ready');
+    qrHint.textContent = '廣播已停止';
+    qrHint.className = 'qr-hint';
+    log('廣播已停止', 'err');
+}
+
+// ────────────────────────────────────────────
+//  聽眾端：加入廣播
+// ────────────────────────────────────────────
+function joinBroadcast() {
+    const roomId = document.getElementById('room-id-input').value.trim();
+    if (!roomId) { alert('請輸入房間 ID'); return; }
+
+    const statusEl = document.getElementById('listener-status');
+    statusEl.textContent = '連線中…';
+    statusEl.className = 'listener-status connecting';
+    log(`嘗試連線至：${roomId}`, 'info');
+
+    // 建立自己的 Peer
+    const myId = 'listener-' + Math.random().toString(36).substr(2, 8);
+    const listenerPeer = new Peer(myId, {
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        }
+    });
+
+    listenerPeer.on('open', () => {
+        log('本地節點建立完成，呼叫主播…', 'info');
+
+        // 呼叫主播（傳一個靜音流，只為了觸發 call）
+        const silentStream = createSilentStream();
+        const call = listenerPeer.call(roomId, silentStream);
+
+        call.on('stream', (remoteStream) => {
+            log('收到主播音訊串流！', 'ok');
+            const listenerAudio = document.getElementById('listener-audio');
+            listenerAudio.srcObject = remoteStream;
+            listenerAudio.style.display = 'block';
+            listenerAudio.play().catch(() => {});
+            statusEl.textContent = '✓ 已連線，正在收聽廣播';
+            statusEl.className = 'listener-status ok';
         });
 
-        // 處理上傳的音檔
-        function handleFiles(files) {
-            for (let file of files) {
-                if (file.type.startsWith('audio/')) {
-                    const track = {
-                        id: Date.now() + Math.random().toString(36).substr(2, 5),
-                        name: file.name,
-                        file: file, // 記憶體中的 Blob 物件
-                        url: URL.createObjectURL(file)
-                    };
-                    playlist.push(track);
-                }
-            }
-            renderPlaylist();
-            if (currentTrackIndex === -1 && playlist.length > 0) {
-                playTrack(0);
-            }
-        }
-
-        // --- 渲染播放清單 UI ---
-        function renderPlaylist() {
-            playlistContainer.innerHTML = '';
-            playlist.forEach((track, index) => {
-                const li = document.createElement('li');
-                li.className = `playlist-item ${index === currentTrackIndex ? 'playing' : ''}`;
-                li.setAttribute('draggable', 'true');
-                li.dataset.index = index;
-
-                li.innerHTML = `
-                    <span class="item-title">${index + 1}. ${track.name}</span>
-                    <button class="btn-del" onclick="deleteTrack(${index}, event)">刪除</button>
-                `;
-
-                // 點擊曲目切換播放
-                li.addEventListener('click', () => playTrack(index));
-                
-                // 拖曳排序事件 (HTML5 Drag and Drop)
-                li.addEventListener('dragstart', handleDragStart);
-                li.addEventListener('dragover', handleDragOver);
-                li.addEventListener('drop', handleDragDrop);
-
-                playlistContainer.appendChild(li);
-            });
-        }
-
-        // --- 播放控制核心 ---
-        function playTrack(index) {
-            if (index < 0 || index >= playlist.length) return;
-            
-            currentTrackIndex = index;
-            const track = playlist[index];
-            
-            audioPlayer.src = track.url;
-            nowPlayingDiv.innerText = `📻 正在撥放：${track.name}`;
-            
-            // 更新 QR Code：將當前歌曲名稱編碼進去（可結合外部點歌或異地監聽系統）
-            const shareUrl = `${window.location.origin}${window.location.pathname}?track=${encodeURIComponent(track.name)}`;
-            updateQRCode(shareUrl);
-
-            renderPlaylist();
-            audioPlayer.play().catch(err => console.log("自動播放受瀏覽器安全限制，需手動點擊播放"));
-        }
-
-        // 自動播放下一首
-        audioPlayer.addEventListener('ended', () => {
-            if (currentTrackIndex + 1 < playlist.length) {
-                playTrack(currentTrackIndex + 1);
-            } else {
-                nowPlayingDiv.innerText = "🛑 節目播放完畢";
-                currentTrackIndex = -1;
-                renderPlaylist();
-            }
+        call.on('close', () => {
+            statusEl.textContent = '主播已結束廣播';
+            statusEl.className = 'listener-status err';
+            log('廣播已結束', 'err');
         });
 
-        // 刪除曲目
-        window.deleteTrack = function(index, event) {
-            event.stopPropagation(); // 防止觸發播放事件
-            
-            // 釋放記憶體
-            URL.revokeObjectURL(playlist[index].url);
-            
-            playlist.splice(index, 1);
-            
-            if (index === currentTrackIndex) {
-                audioPlayer.src = '';
-                nowPlayingDiv.innerText = "尚未裝載節目音檔";
-                currentTrackIndex = -1;
-            } else if (index < currentTrackIndex) {
-                currentTrackIndex--;
-            }
-            
-            renderPlaylist();
-        };
+        call.on('error', (err) => {
+            statusEl.textContent = `連線失敗：${err}`;
+            statusEl.className = 'listener-status err';
+            log(`連線失敗：${err}`, 'err');
+        });
+    });
 
-        // --- 拖曳排序邏輯 (Drag & Drop) ---
-        let dragSourceIndex = null;
+    listenerPeer.on('error', (err) => {
+        statusEl.textContent = `節點建立失敗：${err.type}`;
+        statusEl.className = 'listener-status err';
+        log(`聽眾節點錯誤：${err.type}`, 'err');
+    });
+}
 
-        function handleDragStart(e) {
-            dragSourceIndex = this.dataset.index;
-            e.dataTransfer.effectAllowed = 'move';
-        }
+// 建立靜音 MediaStream（用於觸發 call，不實際傳輸音訊）
+function createSilentStream() {
+    const ctx = new AudioContext();
+    const oscillator = ctx.createOscillator();
+    const dst = ctx.createMediaStreamDestination();
+    oscillator.connect(dst);
+    oscillator.start();
+    const track = dst.stream.getAudioTracks()[0];
+    track.enabled = false;
+    return new MediaStream([track]);
+}
 
-        function handleDragOver(e) {
-            e.preventDefault();
-        }
-
-        function handleDragDrop(e) {
-            e.preventDefault();
-            const targetIndex = this.dataset.index;
-            if (dragSourceIndex === null || dragSourceIndex === targetIndex) return;
-
-            // 陣列元素位置調換
-            const movedItem = playlist.splice(dragSourceIndex, 1)[0];
-            playlist.splice(targetIndex, 0, movedItem);
-
-            // 修正當前播放指標
-            if (currentTrackIndex == dragSourceIndex) {
-                currentTrackIndex = targetIndex;
-            } else if (currentTrackIndex > dragSourceIndex && currentTrackIndex <= targetIndex) {
-                currentTrackIndex--;
-            } else if (currentTrackIndex < dragSourceIndex && currentTrackIndex >= targetIndex) {
-                currentTrackIndex++;
-            }
-
-            renderPlaylist();
-        }
-
-        // --- 更新 QR Code ---
-        function updateQRCode(text) {
-            qrcode.clear();
-            qrcode.makeCode(text);
-        }
-    </script>
+// ── 頁面載入：自動偵測 URL 參數 ──
+window.addEventListener('load', () => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('room')) {
+        switchMode('listener');
+        document.getElementById('tab-listener').click();
+    } else {
+        switchMode('broadcaster');
+    }
+});
+</script>
 </body>
 </html>
